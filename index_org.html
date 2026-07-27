@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文献检索 – 可靠性与精度保持性</title>
+  <style>
+    body { font-family: sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 15px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px; }
+    .filter-group { display: flex; flex-direction: column; }
+    label { font-weight: bold; margin-bottom: 4px; }
+    select, input { padding: 6px; font-size: 14px; }
+    #results { list-style: none; padding: 0; }
+    .paper { border-bottom: 1px solid #ddd; padding: 10px 0; }
+    .paper h3 { margin: 0 0 5px 0; }
+    .meta { font-size: 0.9em; color: #555; }
+    .tags { margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .tag { background: #eef; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; }
+  </style>
+</head>
+<body>
+  <h1>可靠性与精度保持性文献库</h1>
+
+  <div class="filters">
+    <div class="filter-group">
+      <label for="cat1">文献类别</label>
+      <select id="cat1">
+        <option value="">全部</option>
+        <option value="专利">专利</option>
+        <option value="期刊文献">期刊文献</option>
+        <option value="学位论文">学位论文</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="mainTech">技术大类</label>
+      <select id="mainTech">
+        <option value="">全部</option>
+        <option value="可靠性">可靠性</option>
+        <option value="精度保持性">精度保持性</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="subTech">技术子类</label>
+      <select id="subTech">
+        <option value="">（先选大类）</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="mainObj">对象大类</label>
+      <select id="mainObj">
+        <option value="">全部</option>
+        <option value="整机">整机</option>
+        <option value="子系统">子系统</option>
+        <option value="功能部件">功能部件</option>
+        <option value="零件和刀具">零件和刀具</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="subObj">对象子类</label>
+      <select id="subObj">
+        <option value="">（先选大类）</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="searchText">标题/作者/关键词搜索</label>
+      <input type="text" id="searchText" placeholder="例如：刀库">
+    </div>
+  </div>
+
+  <div id="resultCount"></div>
+  <ul id="results"></ul>
+
+  <script>
+    // ---------- Category hierarchy data (leaf labels only) ----------
+    const techSubMap = {
+      "可靠性": [
+        "可靠性试验", "早期故障", "载荷谱", "可靠性预计与分配",
+        "可靠性管理", "装配可靠性", "可靠性评估", "失效和故障分析",
+        "可靠性增长", "剩余寿命预测", "制造工艺可靠性", "维修维护"
+      ],
+      "精度保持性": [
+        "精度保持性试验与评估", "精度退化建模与预测", "摩擦磨损",
+        "应力应变", "误差传递与建模", "装配技术与精度", "结合面",
+        "精度保持性评估"
+      ]
+    };
+    const objSubMap = {
+      "整机": ["车床和车铣复合", "加工中心", "镗床", "磨床", "五轴", "龙门", "特种机床"],
+      "子系统": ["进给系统", "润滑系统", "冷却系统"],
+      "功能部件": [
+        "丝杠", "导轨", "刀架", "刀库和自动交换装置",
+        "电主轴", "机械主轴", "转台", "摆角头", "排屑器"
+      ],
+      "零件和刀具": ["轴承", "编码器", "刀具", "基础大件"]
+    };
+
+    // ---------- Global data ----------
+    let papers = [];
+
+    // Load the JSON
+    fetch('data.json')
+      .then(response => response.json())
+      .then(data => {
+        papers = data;
+        renderResults();
+      })
+      .catch(err => {
+        document.getElementById('results').innerHTML =
+          '<li>无法加载数据文件 data.json，请检查文件是否存在。</li>';
+        console.error(err);
+      });
+
+    // ---------- UI logic for cascading dropdowns ----------
+    document.getElementById('mainTech').addEventListener('change', function() {
+      const sub = document.getElementById('subTech');
+      const mainVal = this.value;
+      sub.innerHTML = '<option value="">全部</option>';
+      if (mainVal && techSubMap[mainVal]) {
+        techSubMap[mainVal].forEach(item => {
+          sub.innerHTML += `<option value="${item}">${item}</option>`;
+        });
+      }
+      renderResults();
+    });
+
+    document.getElementById('mainObj').addEventListener('change', function() {
+      const sub = document.getElementById('subObj');
+      const mainVal = this.value;
+      sub.innerHTML = '<option value="">全部</option>';
+      if (mainVal && objSubMap[mainVal]) {
+        objSubMap[mainVal].forEach(item => {
+          sub.innerHTML += `<option value="${item}">${item}</option>`;
+        });
+      }
+      renderResults();
+    });
+
+    // Re-render on any filter change
+    document.getElementById('cat1').addEventListener('change', renderResults);
+    document.getElementById('subTech').addEventListener('change', renderResults);
+    document.getElementById('subObj').addEventListener('change', renderResults);
+    document.getElementById('searchText').addEventListener('input', renderResults);
+
+    function renderResults() {
+      const cat1 = document.getElementById('cat1').value;
+      const mainTech = document.getElementById('mainTech').value;
+      const subTech = document.getElementById('subTech').value;
+      const mainObj = document.getElementById('mainObj').value;
+      const subObj = document.getElementById('subObj').value;
+      const text = document.getElementById('searchText').value.toLowerCase().trim();
+
+      const filtered = papers.filter(p => {
+        // Category 1 filter
+        if (cat1 && p['文献类别'] !== cat1) return false;
+
+        // Technology filter: match if any of the paper's tags equals the selected leaf,
+        // or if a main category is selected but no leaf, we check if the paper has
+        // any tag belonging to that main category.
+        if (mainTech || subTech) {
+          const paperTechs = p['技术'] || [];
+          if (subTech) {
+            // Leaf selected: paper must contain exactly this leaf tag
+            if (!paperTechs.includes(subTech)) return false;
+          } else if (mainTech) {
+            // No leaf, but a main category is selected:
+            // the paper must contain at least one leaf that belongs to this main cat.
+            const allowedLeaves = techSubMap[mainTech] || [];
+            if (!paperTechs.some(t => allowedLeaves.includes(t))) return false;
+          }
+        }
+
+        // Object filter (same logic)
+        if (mainObj || subObj) {
+          const paperObjs = p['对象'] || [];
+          if (subObj) {
+            if (!paperObjs.includes(subObj)) return false;
+          } else if (mainObj) {
+            const allowedLeaves = objSubMap[mainObj] || [];
+            if (!paperObjs.some(o => allowedLeaves.includes(o))) return false;
+          }
+        }
+
+        // Text search (match title, author, or keyword)
+        if (text) {
+          const title = (p['题名'] || '').toLowerCase();
+          const author = (p['作者'] || '').toLowerCase();
+          const keywords = (p['Keyword-关键词'] || '').toLowerCase();
+          if (!title.includes(text) && !author.includes(text) && !keywords.includes(text)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
+      // Display count and results
+      document.getElementById('resultCount').textContent =
+        `找到 ${filtered.length} 篇文献`;
+
+      const resultsUl = document.getElementById('results');
+      if (filtered.length === 0) {
+        resultsUl.innerHTML = '<li>没有匹配的结果。</li>';
+        return;
+      }
+
+      resultsUl.innerHTML = filtered.map(p => {
+        const techTags = (p['技术'] || []).map(t => `<span class="tag">${t}</span>`).join('');
+        const objTags = (p['对象'] || []).map(o => `<span class="tag">${o}</span>`).join('');
+        return `
+          <li class="paper">
+            <h3>${p['题名'] || '无标题'}</h3>
+            <div class="meta">
+              ${p['作者'] || ''} · ${p['SrcDatabase-来源库'] || ''} · ${p['Source-文献来源'] || ''}
+              ${p['PubTime-发表时间'] ? ' · ' + p['PubTime-发表时间'] : ''}
+            </div>
+            <div class="meta">${p['Summary-摘要'] ? p['Summary-摘要'].substring(0, 150) + '...' : ''}</div>
+            <div class="tags">${techTags}${objTags}</div>
+          </li>
+        `;
+      }).join('');
+    }
+  </script>
+</body>
+</html>
