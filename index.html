@@ -161,8 +161,9 @@
       .then(data => {
         papers = data;
         currentFilteredPapers = [...papers]; // initially all
-        renderResults();
-        updateCharts();  // draws charts with all data (default mode)
+        //renderResults();
+        //updateCharts();  // draws charts with all data (default mode)
+        applyFiltersAndRender();
       })
       .catch(err => {
         document.getElementById('results').innerHTML =
