@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>文献检索 – 可靠性与精度保持性</title>
-  <!-- Chart.js for statistics -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <style>
     body { font-family: sans-serif; max-width: 1200px; margin: 20px auto; padding: 0 15px; }
@@ -20,19 +19,20 @@
     .meta { font-size: 0.9em; color: #555; }
     .tags { margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap; }
     .tag { background: #eef; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; }
-    /* abstract toggle */
     .abstract-container { font-size: 0.9em; color: #444; margin: 4px 0; }
     .toggle-abstract { background: none; border: none; color: #007BFF; cursor: pointer; font-size: 0.9em; padding: 0; margin-left: 4px; }
     .toggle-abstract:hover { text-decoration: underline; }
-    /* sorting bar */
     .result-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
     .sort-group { display: flex; align-items: center; gap: 5px; }
-    /* stats panel */
     details { margin-bottom: 20px; }
     summary { font-weight: bold; cursor: pointer; margin-bottom: 10px; }
     .charts-container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between; }
     .chart-box { flex: 1 1 300px; min-width: 280px; }
     mark { background-color: #fff3b0; padding: 0 2px; }
+    /* toggle buttons for chart mode */
+    .chart-mode-toggle { display: flex; gap: 5px; margin-left: 15px; align-items: center; font-size: 0.9em; }
+    .chart-mode-toggle button { padding: 3px 10px; border: 1px solid #aaa; background: #f5f5f5; cursor: pointer; border-radius: 3px; }
+    .chart-mode-toggle button.active { background: #007BFF; color: white; border-color: #007BFF; }
   </style>
 </head>
 <body>
@@ -93,9 +93,15 @@
     </div>
   </div>
 
-  <!-- Statistics panel -->
-  <details id="statsPanel">
-    <summary>📊 文献统计分析（基于全部数据）</summary>
+  <!-- Statistics panel with mode toggle -->
+  <details id="statsPanel" open>
+    <summary style="display: flex; align-items: center;">
+      📊 文献统计分析
+      <div class="chart-mode-toggle" id="chartToggle" style="margin-left: auto; font-weight: normal;">
+        <button id="btnAll" class="active">全部数据</button>
+        <button id="btnFiltered">当前筛选</button>
+      </div>
+    </summary>
     <div class="charts-container">
       <div class="chart-box"><canvas id="techChart" width="400" height="300"></canvas></div>
       <div class="chart-box"><canvas id="typeChart" width="400" height="300"></canvas></div>
@@ -121,7 +127,7 @@
   <ul id="results"></ul>
 
   <script>
-    // ---------- Category hierarchy data ----------
+    // ---------- Hierarchy maps ----------
     const techSubMap = {
       "可靠性": [
         "可靠性试验", "早期故障", "载荷谱", "可靠性预计与分配",
@@ -145,18 +151,18 @@
     };
 
     let papers = [];
-    let chartsCreated = false;
+    let chartInstances = {};
+    let currentFilteredPapers = [];   // holds the currently filtered (and sorted) list
+    let chartMode = 'all';            // 'all' or 'filtered'
 
     // ---------- Load data ----------
     fetch('data.json')
       .then(response => response.json())
       .then(data => {
         papers = data;
+        currentFilteredPapers = [...papers]; // initially all
         renderResults();
-        if (!chartsCreated) {
-          drawCharts();
-          chartsCreated = true;
-        }
+        updateCharts();  // draws charts with all data (default mode)
       })
       .catch(err => {
         document.getElementById('results').innerHTML =
@@ -164,7 +170,7 @@
         console.error(err);
       });
 
-    // ---------- Cascading dropdowns ----------
+    // ---------- UI: cascading dropdowns ----------
     document.getElementById('mainTech').addEventListener('change', function() {
       const sub = document.getElementById('subTech');
       const mainVal = this.value;
@@ -174,7 +180,7 @@
           sub.innerHTML += `<option value="${item}">${item}</option>`;
         });
       }
-      renderResults();
+      applyFiltersAndRender();
     });
 
     document.getElementById('mainObj').addEventListener('change', function() {
@@ -186,15 +192,14 @@
           sub.innerHTML += `<option value="${item}">${item}</option>`;
         });
       }
-      renderResults();
+      applyFiltersAndRender();
     });
 
-    // Re-render on any filter change
-    document.getElementById('cat1').addEventListener('change', renderResults);
-    document.getElementById('subTech').addEventListener('change', renderResults);
-    document.getElementById('subObj').addEventListener('change', renderResults);
-    document.getElementById('searchText').addEventListener('input', renderResults);
-    document.getElementById('sortSelect').addEventListener('change', renderResults);
+    document.getElementById('cat1').addEventListener('change', applyFiltersAndRender);
+    document.getElementById('subTech').addEventListener('change', applyFiltersAndRender);
+    document.getElementById('subObj').addEventListener('change', applyFiltersAndRender);
+    document.getElementById('searchText').addEventListener('input', applyFiltersAndRender);
+    document.getElementById('sortSelect').addEventListener('change', applyFiltersAndRender);
 
     // Reset button
     document.getElementById('resetBtn').addEventListener('click', function() {
@@ -205,19 +210,27 @@
       document.getElementById('subObj').innerHTML = '<option value="">（先选大类）</option>';
       document.getElementById('searchText').value = '';
       document.getElementById('sortSelect').value = '';
-      renderResults();
+      applyFiltersAndRender();
     });
 
-    // ---------- Helper: highlight text ----------
-    function highlightText(text, searchTerm) {
-      if (!searchTerm || !text) return text;
-      const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // escape regex
-      const regex = new RegExp(`(${searchTerm})`, 'gi');
-      return String(text).replace(regex, '<mark>$1</mark>');
-    }
+    // Chart mode toggle buttons
+    document.getElementById('btnAll').addEventListener('click', function() {
+      if (chartMode === 'all') return;
+      chartMode = 'all';
+      document.getElementById('btnAll').classList.add('active');
+      document.getElementById('btnFiltered').classList.remove('active');
+      updateCharts();
+    });
+    document.getElementById('btnFiltered').addEventListener('click', function() {
+      if (chartMode === 'filtered') return;
+      chartMode = 'filtered';
+      document.getElementById('btnFiltered').classList.add('active');
+      document.getElementById('btnAll').classList.remove('active');
+      updateCharts();
+    });
 
-    // ---------- Render results ----------
-    function renderResults() {
+    // ---------- Filtering & sorting logic ----------
+    function applyFiltersAndRender() {
       const cat1 = document.getElementById('cat1').value;
       const mainTech = document.getElementById('mainTech').value;
       const subTech = document.getElementById('subTech').value;
@@ -227,7 +240,7 @@
       const sortBy = document.getElementById('sortSelect').value;
 
       // Filter
-      const filtered = papers.filter(p => {
+      let filtered = papers.filter(p => {
         if (cat1 && p['文献类别'] !== cat1) return false;
         if (mainTech || subTech) {
           const paperTechs = p['技术'] || [];
@@ -258,7 +271,7 @@
         return true;
       });
 
-      // Sorting
+      // Sort
       let sorted = [...filtered];
       switch (sortBy) {
         case 'titleAsc':
@@ -274,7 +287,7 @@
           sorted.sort((a, b) => {
             const da = a['PubTime-发表时间'] || a['Year-年'] || '';
             const db = b['PubTime-发表时间'] || b['Year-年'] || '';
-            return db.localeCompare(da); // newest first
+            return db.localeCompare(da);
           });
           break;
         case 'dateAsc':
@@ -284,29 +297,39 @@
             return da.localeCompare(db);
           });
           break;
-        default: break; // no sort
+        default: break;
       }
 
-      // Display count
-      document.getElementById('resultCount').textContent =
-        `找到 ${sorted.length} 篇文献`;
+      currentFilteredPapers = sorted;  // store for chart use
+      renderResults(sorted, text);
+      updateCharts();  // re-draw charts according to current mode (all vs filtered)
+    }
 
+    // ---------- Rendering list with highlights ----------
+    function renderResults(papersList, searchText) {
+      document.getElementById('resultCount').textContent = `找到 ${papersList.length} 篇文献`;
       const resultsUl = document.getElementById('results');
-      if (sorted.length === 0) {
+      if (papersList.length === 0) {
         resultsUl.innerHTML = '<li>没有匹配的结果。</li>';
         return;
       }
 
-      resultsUl.innerHTML = sorted.map(p => {
+      function highlightText(txt, term) {
+        if (!term || !txt) return txt;
+        const escaped = txt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(${term})`, 'gi');
+        return String(txt).replace(regex, '<mark>$1</mark>');
+      }
+
+      resultsUl.innerHTML = papersList.map(p => {
         const techTags = (p['技术'] || []).map(t => `<span class="tag">${t}</span>`).join('');
         const objTags = (p['对象'] || []).map(o => `<span class="tag">${o}</span>`).join('');
         const abstractText = p['Summary-摘要'] || '';
         const shortAbstract = abstractText.length > 150 ? abstractText.substring(0, 150) + '...' : abstractText;
         const hasMore = abstractText.length > 150;
-        // Highlighted fields
-        const titleHtml = highlightText(p['题名'] || '无标题', text);
-        const authorHtml = highlightText(p['作者'] || '', text);
-        const keywordsHtml = highlightText(p['Keyword-关键词'] || '', text);
+        const titleHtml = highlightText(p['题名'] || '无标题', searchText);
+        const authorHtml = highlightText(p['作者'] || '', searchText);
+        const keywordsHtml = highlightText(p['Keyword-关键词'] || '', searchText);
 
         return `
           <li class="paper">
@@ -326,7 +349,7 @@
         `;
       }).join('');
 
-      // Attach event listener for abstract toggle (delegation)
+      // Abstract toggle listener
       resultsUl.addEventListener('click', function(e) {
         if (e.target.classList.contains('toggle-abstract')) {
           const btn = e.target;
@@ -346,16 +369,43 @@
       });
     }
 
-    // ---------- Draw statistics charts ----------
-    function drawCharts() {
-      // 1. Technology main categories
+    // ---------- Chart functions ----------
+    function updateCharts() {
+      // Determine which dataset to use
+      const dataArray = (chartMode === 'all') ? papers : currentFilteredPapers;
+
+      // Destroy existing charts
+      Object.values(chartInstances).forEach(chart => {
+        if (chart) chart.destroy();
+      });
+
+      // If no data, show placeholders
+      if (!dataArray || dataArray.length === 0) {
+        document.getElementById('techChart').parentElement.innerHTML = '<p>当前无数据</p>';
+        document.getElementById('typeChart').parentElement.innerHTML = '<p>当前无数据</p>';
+        document.getElementById('yearChart').parentElement.innerHTML = '<p>当前无数据</p>';
+        return;
+      }
+
+      // Ensure canvas elements exist (in case they were overwritten by placeholder)
+      const ensureCanvas = (id) => {
+        const parent = document.getElementById(id).parentElement;
+        if (!document.getElementById(id)) {
+          parent.innerHTML = `<canvas id="${id}" width="400" height="300"></canvas>`;
+        }
+      };
+      ensureCanvas('techChart');
+      ensureCanvas('typeChart');
+      ensureCanvas('yearChart');
+
+      // 1. Technology main categories bar
       const techCounts = { '可靠性': 0, '精度保持性': 0 };
-      papers.forEach(p => {
+      dataArray.forEach(p => {
         const tags = p['技术'] || [];
         if (tags.some(t => techSubMap['可靠性'].includes(t))) techCounts['可靠性']++;
         if (tags.some(t => techSubMap['精度保持性'].includes(t))) techCounts['精度保持性']++;
       });
-      new Chart(document.getElementById('techChart'), {
+      chartInstances.techChart = new Chart(document.getElementById('techChart'), {
         type: 'bar',
         data: {
           labels: ['可靠性', '精度保持性'],
@@ -371,13 +421,13 @@
         }
       });
 
-      // 2. Document type pie chart
+      // 2. Document type pie
       const typeCounts = {};
-      papers.forEach(p => {
+      dataArray.forEach(p => {
         const t = p['文献类别'] || '未知';
         typeCounts[t] = (typeCounts[t] || 0) + 1;
       });
-      new Chart(document.getElementById('typeChart'), {
+      chartInstances.typeChart = new Chart(document.getElementById('typeChart'), {
         type: 'pie',
         data: {
           labels: Object.keys(typeCounts),
@@ -392,9 +442,9 @@
         }
       });
 
-      // 3. Year distribution (extract year from PubTime)
+      // 3. Year distribution
       const yearMap = {};
-      papers.forEach(p => {
+      dataArray.forEach(p => {
         const pub = p['PubTime-发表时间'];
         if (pub) {
           const year = pub.match(/^(\d{4})/);
@@ -406,7 +456,7 @@
       });
       const years = Object.keys(yearMap).sort();
       if (years.length > 0) {
-        new Chart(document.getElementById('yearChart'), {
+        chartInstances.yearChart = new Chart(document.getElementById('yearChart'), {
           type: 'bar',
           data: {
             labels: years,
@@ -423,7 +473,8 @@
           }
         });
       } else {
-        document.getElementById('yearChart').parentElement.innerHTML = '<p>无年份数据</p>';
+        document.getElementById('yearChart').parentElement.innerHTML = '<p>当前数据集无年份数据</p>';
+        chartInstances.yearChart = null;
       }
     }
   </script>
