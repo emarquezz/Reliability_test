@@ -39,7 +39,6 @@
   <h1>可靠性与精度保持性文献库</h1>
 
   <div class="filters">
-    <!-- same filters as before -->
     <div class="filter-group">
       <label for="cat1">文献类别</label>
       <select id="cat1">
@@ -49,7 +48,6 @@
         <option value="学位论文">学位论文</option>
       </select>
     </div>
-
     <div class="filter-group">
       <label for="mainTech">技术大类</label>
       <select id="mainTech">
@@ -58,14 +56,12 @@
         <option value="精度保持性">精度保持性</option>
       </select>
     </div>
-
     <div class="filter-group">
       <label for="subTech">技术子类</label>
       <select id="subTech">
         <option value="">（先选大类）</option>
       </select>
     </div>
-
     <div class="filter-group">
       <label for="mainObj">对象大类</label>
       <select id="mainObj">
@@ -76,25 +72,21 @@
         <option value="零件和刀具">零件和刀具</option>
       </select>
     </div>
-
     <div class="filter-group">
       <label for="subObj">对象子类</label>
       <select id="subObj">
         <option value="">（先选大类）</option>
       </select>
     </div>
-
     <div class="filter-group">
       <label for="searchText">标题/作者/关键词搜索</label>
       <input type="text" id="searchText" placeholder="例如：刀库">
     </div>
-
     <div class="button-row">
       <button id="resetBtn">🔄 重置全部</button>
     </div>
   </div>
 
-  <!-- Statistics panel – collapsed by default -->
   <details id="statsPanel">
     <summary>
       📊 文献统计分析
@@ -142,23 +134,27 @@
     };
 
     let papers = [];
+    let statisticsData = null;   // precomputed global stats from statistics.json
     let chartInstances = {};
     let currentFilteredPapers = [];
     let chartMode = 'all';
-    let chartsDrawn = false;   // track if we ever drew charts (for lazy init)
+    let chartsDrawn = false;
 
-    // ---------- Load data ----------
-    fetch('data.json')
-      .then(response => response.json())
-      .then(data => {
-        papers = data;
-        currentFilteredPapers = [...papers];
-        applyFiltersAndRender();   // initial render (charts are NOT drawn now)
-      })
-      .catch(err => {
-        document.getElementById('results').innerHTML = '<li>❌ 无法加载 data.json，请确保文件存在于同一目录下。</li>';
-        console.error(err);
-      });
+    // ---------- Load both data files ----------
+    Promise.all([
+      fetch('data.json').then(res => res.json()),
+      fetch('statistics.json').then(res => res.json()).catch(() => null)  // if missing, fallback to null
+    ])
+    .then(([data, stats]) => {
+      papers = data;
+      statisticsData = stats;   // may be null if file missing
+      currentFilteredPapers = [...papers];
+      applyFiltersAndRender();
+    })
+    .catch(err => {
+      document.getElementById('results').innerHTML = '<li>❌ 无法加载 data.json，请确保文件存在于同一目录下。</li>';
+      console.error(err);
+    });
 
     // ---------- Cascading dropdowns ----------
     document.getElementById('mainTech').addEventListener('change', function() {
@@ -170,7 +166,6 @@
       }
       applyFiltersAndRender();
     });
-
     document.getElementById('mainObj').addEventListener('change', function() {
       const sub = document.getElementById('subObj');
       const mainVal = this.value;
@@ -180,7 +175,6 @@
       }
       applyFiltersAndRender();
     });
-
     document.getElementById('cat1').addEventListener('change', applyFiltersAndRender);
     document.getElementById('subTech').addEventListener('change', applyFiltersAndRender);
     document.getElementById('subObj').addEventListener('change', applyFiltersAndRender);
@@ -199,46 +193,44 @@
       applyFiltersAndRender();
     });
 
-    // Chart mode toggle buttons
+    // Chart mode toggle
     document.getElementById('btnAll').addEventListener('click', function() {
       if (chartMode === 'all') return;
       chartMode = 'all';
       document.getElementById('btnAll').classList.add('active');
       document.getElementById('btnFiltered').classList.remove('active');
-      updateCharts();   // redraw with new mode (only if panel is open)
+      if (document.getElementById('statsPanel').open) updateCharts();
     });
     document.getElementById('btnFiltered').addEventListener('click', function() {
       if (chartMode === 'filtered') return;
       chartMode = 'filtered';
       document.getElementById('btnFiltered').classList.add('active');
       document.getElementById('btnAll').classList.remove('active');
-      updateCharts();
+      if (document.getElementById('statsPanel').open) updateCharts();
     });
 
-    // Lazy chart drawing: draw only when panel is opened
+    // Lazy chart drawing
     const statsPanel = document.getElementById('statsPanel');
     statsPanel.addEventListener('toggle', function() {
       const toggleBtn = document.getElementById('statsToggleBtn');
       if (statsPanel.open) {
         toggleBtn.textContent = '隐藏统计';
         if (!chartsDrawn) {
-          updateCharts();        // first time, draw charts
+          updateCharts();
           chartsDrawn = true;
         } else {
-          updateCharts();        // subsequent opens, refresh charts with current data
+          updateCharts();
         }
       } else {
         toggleBtn.textContent = '显示统计';
       }
     });
-
-    // Also allow the button inside summary to toggle (optional but nice)
     document.getElementById('statsToggleBtn').addEventListener('click', function(e) {
-      e.stopPropagation();  // prevent summary click from toggling twice
+      e.stopPropagation();
       statsPanel.open = !statsPanel.open;
     });
 
-    // ---------- Filtering, sorting, rendering ----------
+    // ---------- Filtering & sorting ----------
     function applyFiltersAndRender() {
       const cat1 = document.getElementById('cat1').value;
       const mainTech = document.getElementById('mainTech').value;
@@ -300,14 +292,9 @@
 
       currentFilteredPapers = sorted;
       renderResults(sorted, text);
-
-      // Only update charts if the panel is currently open (to avoid unnecessary work)
-      if (statsPanel.open) {
-        updateCharts();
-      }
+      if (statsPanel.open) updateCharts();
     }
 
-    // ---------- Render list ----------
     function renderResults(papersList, searchText) {
       document.getElementById('resultCount').textContent = `找到 ${papersList.length} 篇文献`;
       const resultsUl = document.getElementById('results');
@@ -366,75 +353,108 @@
       });
     }
 
-    // ---------- Chart drawing (lazy) ----------
+    // ---------- Chart drawing (uses precomputed stats for 'all') ----------
     function updateCharts() {
-      const dataArray = (chartMode === 'all') ? papers : currentFilteredPapers;
-
+      const dataArray = (chartMode === 'all') ? null : currentFilteredPapers;  // 'all' will use statisticsData
       // Destroy old charts
       Object.values(chartInstances).forEach(chart => { if (chart) chart.destroy(); });
 
-      if (!dataArray || dataArray.length === 0) {
+      // Determine if we have data to show
+      let hasData = false;
+      if (chartMode === 'all') {
+        hasData = statisticsData !== null && papers.length > 0;
+      } else {
+        hasData = currentFilteredPapers.length > 0;
+      }
+
+      if (!hasData) {
         document.getElementById('techChart').parentElement.innerHTML = '<p>当前无数据</p>';
         document.getElementById('typeChart').parentElement.innerHTML = '<p>当前无数据</p>';
         document.getElementById('yearChart').parentElement.innerHTML = '<p>当前无数据</p>';
-        chartsDrawn = false;  // reset flag so next open will redraw
+        chartsDrawn = false;
         return;
       }
 
-      const ensureCanvas = (id) => {
+      // Ensure canvas elements
+      ['techChart','typeChart','yearChart'].forEach(id => {
         const parent = document.getElementById(id).parentElement;
-        if (!document.getElementById(id)) {
-          parent.innerHTML = `<canvas id="${id}" width="400" height="300"></canvas>`;
-        }
-      };
-      ensureCanvas('techChart');
-      ensureCanvas('typeChart');
-      ensureCanvas('yearChart');
+        if (!document.getElementById(id)) parent.innerHTML = `<canvas id="${id}" width="400" height="300"></canvas>`;
+      });
 
       // Tech bar
-      const techCounts = { '可靠性': 0, '精度保持性': 0 };
-      dataArray.forEach(p => {
-        const tags = p['技术'] || [];
-        if (tags.some(t => techSubMap['可靠性'].includes(t))) techCounts['可靠性']++;
-        if (tags.some(t => techSubMap['精度保持性'].includes(t))) techCounts['精度保持性']++;
-      });
+      let techData;
+      if (chartMode === 'all' && statisticsData && statisticsData.techCounts) {
+        techData = statisticsData.techCounts;
+      } else {
+        // compute on the fly
+        const counts = { '可靠性': 0, '精度保持性': 0 };
+        currentFilteredPapers.forEach(p => {
+          const tags = p['技术'] || [];
+          if (tags.some(t => techSubMap['可靠性'].includes(t))) counts['可靠性']++;
+          if (tags.some(t => techSubMap['精度保持性'].includes(t))) counts['精度保持性']++;
+        });
+        techData = [counts['可靠性'], counts['精度保持性']];
+      }
       chartInstances.techChart = new Chart(document.getElementById('techChart'), {
         type: 'bar',
         data: {
           labels: ['可靠性', '精度保持性'],
-          datasets: [{ label: '文献数量', data: [techCounts['可靠性'], techCounts['精度保持性']], backgroundColor: ['#4e79a7', '#f28e2b'] }]
+          datasets: [{ label: '文献数量', data: techData, backgroundColor: ['#4e79a7', '#f28e2b'] }]
         },
         options: { responsive: true, plugins: { title: { display: true, text: '技术大类分布（多标签重复计算）' } } }
       });
 
       // Type pie
-      const typeCounts = {};
-      dataArray.forEach(p => { const t = p['文献类别'] || '未知'; typeCounts[t] = (typeCounts[t] || 0) + 1; });
+      let typeLabels, typeData;
+      if (chartMode === 'all' && statisticsData && statisticsData.typeCounts) {
+        typeLabels = Object.keys(statisticsData.typeCounts);
+        typeData = Object.values(statisticsData.typeCounts);
+      } else {
+        const counts = {};
+        currentFilteredPapers.forEach(p => {
+          const t = p['文献类别'] || '未知';
+          counts[t] = (counts[t] || 0) + 1;
+        });
+        typeLabels = Object.keys(counts);
+        typeData = Object.values(counts);
+      }
       chartInstances.typeChart = new Chart(document.getElementById('typeChart'), {
         type: 'pie',
         data: {
-          labels: Object.keys(typeCounts),
-          datasets: [{ data: Object.values(typeCounts), backgroundColor: ['#e15759', '#76b7b2', '#59a14f', '#edc949'] }]
+          labels: typeLabels,
+          datasets: [{ data: typeData, backgroundColor: ['#e15759', '#76b7b2', '#59a14f', '#edc949'] }]
         },
         options: { responsive: true, plugins: { title: { display: true, text: '文献类别比例' } } }
       });
 
       // Year bar
-      const yearMap = {};
-      dataArray.forEach(p => {
-        const pub = p['PubTime-发表时间'];
-        if (pub) {
-          const year = pub.match(/^(\d{4})/);
-          if (year) { const y = year[1]; yearMap[y] = (yearMap[y] || 0) + 1; }
-        }
-      });
-      const years = Object.keys(yearMap).sort();
-      if (years.length > 0) {
+      let yearLabels, yearData;
+      if (chartMode === 'all' && statisticsData && statisticsData.yearMap) {
+        const yearMap = statisticsData.yearMap;
+        yearLabels = Object.keys(yearMap).sort();
+        yearData = yearLabels.map(y => yearMap[y]);
+      } else {
+        const yearMap = {};
+        currentFilteredPapers.forEach(p => {
+          const pub = p['PubTime-发表时间'];
+          if (pub) {
+            const match = pub.match(/^(\d{4})/);
+            if (match) {
+              const y = match[1];
+              yearMap[y] = (yearMap[y] || 0) + 1;
+            }
+          }
+        });
+        yearLabels = Object.keys(yearMap).sort();
+        yearData = yearLabels.map(y => yearMap[y]);
+      }
+
+      if (yearLabels.length > 0) {
         chartInstances.yearChart = new Chart(document.getElementById('yearChart'), {
           type: 'bar',
           data: {
-            labels: years,
-            datasets: [{ label: '发表数量', data: years.map(y => yearMap[y]), backgroundColor: '#59a14f' }]
+            labels: yearLabels,
+            datasets: [{ label: '发表数量', data: yearData, backgroundColor: '#59a14f' }]
           },
           options: {
             responsive: true,
